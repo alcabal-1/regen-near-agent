@@ -61,6 +61,10 @@ export interface AgentRunResult {
   proofPlanHash?: string;
   creditAction?: CreditActionResult;
   receipt?: CreditReceipt;
+  // Optional grant-application package (MaEarth / Restor), attached when the caller
+  // asks for it (see --maearth). Chain-free, derived from the run above. Imported as
+  // a type only so run.ts stays free of any maearth runtime dependency.
+  maEarthPackage?: import('../maearth/maearth-package').MaEarthPackage;
   // True when the loop short-circuited at the qualification gate.
   haltedAtQualification: boolean;
 }

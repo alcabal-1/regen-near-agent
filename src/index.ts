@@ -18,10 +18,14 @@ import { CoreScores } from './types/research-score';
 import { DEFAULT_WEIGHTS, THRESHOLDS } from './scoring/weights';
 import { NearCreditIssuer } from './chain/near-issuer';
 import { ApifyResearchProvider } from './research/apify-research';
+import { buildMaEarthPackage, MaEarthPackage } from './maearth/maearth-package';
 
 export { runAgent } from './agent/run';
 export type { RunOptions, AgentRunResult } from './agent/run';
 export { URBAN_HUB_FARMS } from './demo/urban-hub-farms';
+// Grant-application package builder (MaEarth / Restor) — chain-free, programmatic use.
+export { buildMaEarthPackage } from './maearth/maearth-package';
+export type { MaEarthPackage } from './maearth/maearth-package';
 
 // ── tiny console helpers ─────────────────────────────────────────────────────
 const BAR =
@@ -194,10 +198,73 @@ function printResult(result: AgentRunResult): void {
   console.log('\n' + BAR + '\n');
 }
 
+// ── MaEarth grant-package pretty-printer ─────────────────────────────────────────
+function printMaEarthPackage(pkg: MaEarthPackage): void {
+  header('MA EARTH', 'Grant-application package (Restor) — place-led, nature-funder-safe, honesty-flagged');
+
+  console.log('  PROJECT SUMMARY (place-led)');
+  console.log(`    ${pkg.project_summary}`);
+
+  console.log('\n  CATEGORY FIT');
+  pkg.category_fit.forEach((c) => bullet(`${c.category}: ${c.reasoning}`));
+
+  console.log('\n  ELIGIBILITY CHECK');
+  pkg.eligibility_check.forEach((e) =>
+    bullet(`${e.criterion.padEnd(20)} [${e.status}]  ${e.note}`)
+  );
+
+  console.log('\n  CLAIM LABELS (derived from the proof-plan)');
+  pkg.claim_labels.forEach((c) =>
+    bullet(`[${c.label}] (${c.source_confidence})  ${c.claim}`)
+  );
+
+  console.log('\n  MISSING EVIDENCE');
+  pkg.missing_evidence.forEach(bullet);
+
+  console.log('\n  OPERATOR-ONLY BLOCKERS');
+  pkg.operator_only_blockers.forEach(bullet);
+
+  console.log('\n  3-MONTH MILESTONE PLAN (DRAFT)');
+  pkg.milestone_plan_3mo.forEach((m) => {
+    bullet(`Month ${m.month}: ${m.milestone}`);
+    console.log(`        evidence → ${m.evidence}`);
+  });
+
+  console.log('\n  BUDGET SCOPE (target ~$2,000 band — DRAFT)');
+  pkg.budget_scope.line_items.forEach((li) =>
+    console.log(`    • $${String(li.usd).padStart(5)}  ${li.item}`)
+  );
+  kv('  TOTAL', `$${pkg.budget_scope.total_usd}`);
+
+  console.log('\n  DOCUMENTATION PLAN');
+  pkg.documentation_plan.forEach(bullet);
+
+  console.log('\n  FUNDRAISING ACTION QUEUE (community supporters)');
+  pkg.fundraising_action_queue.forEach(bullet);
+
+  console.log('\n  ACTION EVIDENCE LOG (what the agent did)');
+  pkg.action_evidence_log.forEach(bullet);
+
+  console.log('\n  ── HONESTY FIELDS (anti-overclaim) ──');
+  console.log('  implementation_status (per field)');
+  pkg.implementation_status.forEach((f) =>
+    bullet(`${f.field.padEnd(24)} [${f.status}]  ${f.note}`)
+  );
+  console.log('  operator_needed (hard human inputs blocking submission)');
+  pkg.operator_needed.forEach(bullet);
+  console.log('  source_confidence (per generated claim)');
+  pkg.source_confidence.forEach((c) =>
+    bullet(`[${c.source_confidence}]  ${c.claim}`)
+  );
+
+  console.log('\n' + BAR + '\n');
+}
+
 async function main(): Promise<void> {
   const withEvidence = process.argv.includes('--with-evidence');
   const useNear = process.argv.includes('--near');
   const useResearch = process.argv.includes('--research');
+  const useMaEarth = process.argv.includes('--maearth');
   const opts: RunOptions = { withEvidence };
   if (useNear) opts.issuer = new NearCreditIssuer();
   if (useResearch) opts.researcher = new ApifyResearchProvider();
@@ -207,6 +274,11 @@ async function main(): Promise<void> {
       ? '\n▶ MODE: --with-evidence  (simulating full evidence + validator approval → ISSUE_CREDIT path)'
       : '\n▶ MODE: default  (Urban Hub Farms, evidence not yet submitted → honest STAKE outcome)'
   );
+  if (useMaEarth) {
+    console.log(
+      '▶ MA EARTH: building grant-application package (place-led, nature-funder-safe, honesty-flagged)'
+    );
+  }
   console.log(
     useResearch
       ? '▶ RESEARCH: Apify web scraping  (real apify/rag-web-browser run — needs APIFY_TOKEN)'
@@ -220,6 +292,14 @@ async function main(): Promise<void> {
 
   const result = await runAgent(URBAN_HUB_FARMS, opts);
   printResult(result);
+
+  // MaEarth grant package — chain-free, derived from the run above. Attached to the
+  // result (so programmatic callers can read result.maEarthPackage) and pretty-printed.
+  if (useMaEarth && !result.haltedAtQualification) {
+    const pkg = buildMaEarthPackage(result);
+    result.maEarthPackage = pkg;
+    printMaEarthPackage(pkg);
+  }
 }
 
 // Run only when invoked directly (so importing this module for runAgent is side-effect-free).

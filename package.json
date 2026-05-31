@@ -8,6 +8,7 @@
     "demo": "tsx --env-file-if-exists=.env src/index.ts",
     "demo:near": "tsx --env-file-if-exists=.env src/index.ts --near",
     "demo:research": "tsx --env-file-if-exists=.env src/index.ts --research --near",
+    "demo:maearth": "tsx --env-file-if-exists=.env src/index.ts --maearth",
     "web": "tsx --env-file-if-exists=.env src/web/server.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit"
