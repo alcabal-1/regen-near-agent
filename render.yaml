@@ -1,0 +1,23 @@
+# Render Blueprint — deploys the Zentient Regen web demo.
+# Docs: https://render.com/docs/blueprint-spec
+#
+# One web service running the agent's web wrapper (src/web/server.ts via `npm run web`).
+# The server reads PORT from the environment (Render injects it). The public web path
+# is key-free — it runs the pipeline with the STUB chain issuer and NEVER signs a live
+# NEAR transaction or reads a private key (see SECURITY BOUNDARY in src/web/server.ts).
+services:
+  - type: web
+    name: zentient-regen-web
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm run web
+    envVars:
+      # OPTIONAL. If set (in the Render dashboard — do NOT commit it), the agent's
+      # research stage uses the live Apify provider (apify/rag-web-browser). If unset,
+      # it uses the offline StubResearchProvider and the demo still runs end-to-end.
+      # Get a token at https://console.apify.com/account/integrations
+      - key: APIFY_TOKEN
+        sync: false
+      # NOTE: NO NEAR keys here. The public web service must never hold a private key.
+      # The real on-chain credit is demonstrated separately and linked from the UI.

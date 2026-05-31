@@ -8,6 +8,7 @@
     "demo": "tsx --env-file-if-exists=.env src/index.ts",
     "demo:near": "tsx --env-file-if-exists=.env src/index.ts --near",
     "demo:research": "tsx --env-file-if-exists=.env src/index.ts --research --near",
+    "web": "tsx --env-file-if-exists=.env src/web/server.ts",
     "build": "tsc",
     "typecheck": "tsc --noEmit"
   },
@@ -19,12 +20,14 @@
     "hackathon"
   ],
   "devDependencies": {
+    "@types/express": "^4.17.25",
     "@types/node": "^22.9.0",
     "tsx": "^4.19.2",
     "typescript": "^5.6.3"
   },
   "dependencies": {
     "apify-client": "^2.23.3",
+    "express": "^4.22.2",
     "near-api-js": "^7.2.0"
   }
 }
