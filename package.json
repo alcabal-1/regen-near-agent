@@ -7,6 +7,7 @@
   "scripts": {
     "demo": "tsx --env-file-if-exists=.env src/index.ts",
     "demo:near": "tsx --env-file-if-exists=.env src/index.ts --near",
+    "demo:research": "tsx --env-file-if-exists=.env src/index.ts --research --near",
     "build": "tsc",
     "typecheck": "tsc --noEmit"
   },
@@ -23,6 +24,7 @@
     "typescript": "^5.6.3"
   },
   "dependencies": {
+    "apify-client": "^2.23.3",
     "near-api-js": "^7.2.0"
   }
 }

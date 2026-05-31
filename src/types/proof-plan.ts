@@ -19,6 +19,25 @@ export interface ValidatorHandoffPreview {
   required_fields: string[];
 }
 
+// One regional-precedent / reference item the agent's web-research stage surfaced,
+// recorded in the proof-plan to scope (NOT certify) the prior art the evidence must
+// still independently establish.
+export interface RegionalPrecedentEntry {
+  title: string;
+  url: string;
+  snippet: string;
+  source: string;
+}
+
+// "Regional Precedent & Evidence Scan" — populated from the ResearchProvider's
+// findings. This ENRICHES the proof-plan narrative/evidence; it does NOT change the
+// numeric score or the evidence requirements. Absent when no research was run.
+export interface RegionalPrecedentScan {
+  query: string;
+  summary: string;
+  precedents: RegionalPrecedentEntry[];
+}
+
 export interface ProofPlan {
   proof_plan_id: string;
   opportunity_id: string;
@@ -28,4 +47,7 @@ export interface ProofPlan {
   validator_handoff_preview: ValidatorHandoffPreview;
   // Doctrine guardrail — every proof-plan MUST carry this string.
   disclaimer: string;
+  // Optional web-research enrichment (see RegionalPrecedentScan). Does NOT affect
+  // the score or the evidence requirements — narrative/evidence context only.
+  regional_precedent_scan?: RegionalPrecedentScan;
 }

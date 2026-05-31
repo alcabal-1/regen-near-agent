@@ -1,11 +1,14 @@
 // CLI entry + programmatic export.
 //
-//   npm run demo                                 → Urban Hub Farms, stub chain, honest STAKE outcome
-//   npm run demo -- --with-evidence              → full ISSUE_CREDIT path (stub tx)
+//   npm run demo                                 → Urban Hub Farms, stub chain, stub research, honest STAKE outcome
+//   npm run demo -- --with-evidence              → full ISSUE_CREDIT path (stub tx, stub research)
 //   npm run demo:near -- --with-evidence         → full ISSUE_CREDIT path, REAL NEAR testnet tx
+//   npm run demo:research -- --with-evidence      → REAL Apify web research + REAL NEAR tx (needs APIFY_TOKEN)
 //
-// The --near flag swaps StubCreditIssuer for NearCreditIssuer (real on-chain
-// anchor). Everything upstream of the chain seam is identical either way.
+// Flags:
+//   --near      swaps StubCreditIssuer  → NearCreditIssuer     (real on-chain anchor)
+//   --research  swaps StubResearchProvider → ApifyResearchProvider (real web scraping, needs APIFY_TOKEN)
+// Everything upstream of each seam is identical regardless of which flags are set.
 //
 // Also exports runAgent(opportunity, opts) for programmatic use.
 
@@ -14,6 +17,7 @@ import { URBAN_HUB_FARMS } from './demo/urban-hub-farms';
 import { CoreScores } from './types/research-score';
 import { DEFAULT_WEIGHTS, THRESHOLDS } from './scoring/weights';
 import { NearCreditIssuer } from './chain/near-issuer';
+import { ApifyResearchProvider } from './research/apify-research';
 
 export { runAgent } from './agent/run';
 export type { RunOptions, AgentRunResult } from './agent/run';
@@ -60,6 +64,20 @@ function printScoreBreakdown(core: CoreScores, avg: number): void {
   kv('WEIGHTED AVERAGE', avg);
 }
 
+function printResearch(result: AgentRunResult): void {
+  if (!result.research) return;
+  const r = result.research;
+  header('STAGE 0', 'Autonomous web research (the agent gathers its own evidence)');
+  kv('query', r.query);
+  kv('findings', `${r.findings.length} source${r.findings.length === 1 ? '' : 's'}`);
+  if (r.findings.length) {
+    console.log('  finding titles');
+    r.findings.forEach((f) => bullet(f.title));
+  }
+  console.log('  summary');
+  console.log(`    ${r.summary}`);
+}
+
 function printResult(result: AgentRunResult): void {
   const { opportunity: o } = result;
 
@@ -68,6 +86,9 @@ function printResult(result: AgentRunResult): void {
   kv('title', o.title);
   kv('tier / track', `${o.tier} / ${o.track}`);
   console.log(`  statement\n    "${o.normalized_activity_statement}"`);
+
+  // ── Stage 0: Autonomous research (acts-not-reasons) ─────────────────────────
+  printResearch(result);
 
   // ── Stage 1: Qualification ──────────────────────────────────────────────────
   header('STAGE 1', 'Qualification gate (Maslow ∧ Wheel-of-Life ∧ regenerative)');
@@ -112,6 +133,15 @@ function printResult(result: AgentRunResult): void {
       }]`
     )
   );
+  if (pp.regional_precedent_scan) {
+    const scan = pp.regional_precedent_scan;
+    console.log('  ── Regional Precedent & Evidence Scan (from web research) ──');
+    kv('  scan query', scan.query);
+    scan.precedents.forEach((p) => {
+      bullet(`${p.title}${p.url ? `  <${p.url}>` : ''}`);
+    });
+    console.log(`    scope: ${scan.summary}`);
+  }
   kv('proof_plan_hash', result.proofPlanHash!);
   console.log('  ── disclaimer ──');
   console.log(`    "${pp.disclaimer}"`);
@@ -167,13 +197,20 @@ function printResult(result: AgentRunResult): void {
 async function main(): Promise<void> {
   const withEvidence = process.argv.includes('--with-evidence');
   const useNear = process.argv.includes('--near');
+  const useResearch = process.argv.includes('--research');
   const opts: RunOptions = { withEvidence };
   if (useNear) opts.issuer = new NearCreditIssuer();
+  if (useResearch) opts.researcher = new ApifyResearchProvider();
 
   console.log(
     withEvidence
       ? '\n▶ MODE: --with-evidence  (simulating full evidence + validator approval → ISSUE_CREDIT path)'
       : '\n▶ MODE: default  (Urban Hub Farms, evidence not yet submitted → honest STAKE outcome)'
+  );
+  console.log(
+    useResearch
+      ? '▶ RESEARCH: Apify web scraping  (real apify/rag-web-browser run — needs APIFY_TOKEN)'
+      : '▶ RESEARCH: stub  (deterministic offline regional-precedent findings)'
   );
   console.log(
     useNear
