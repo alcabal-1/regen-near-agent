@@ -8,7 +8,11 @@
 // Flags:
 //   --near      swaps StubCreditIssuer  → NearCreditIssuer     (real on-chain anchor)
 //   --research  swaps StubResearchProvider → ApifyResearchProvider (real web scraping, needs APIFY_TOKEN)
+//   --glm       swaps StubReasoner → GlmReasoner (real Z.ai/Zhipu GLM reasoning, needs GLM_API_KEY)
+//   --tigris    swaps LocalLedger → TigrisLedger (real S3-compatible audit trail, needs TIGRIS_BUCKET + AWS_*)
 // Everything upstream of each seam is identical regardless of which flags are set.
+// DOCTRINE: --glm only adds plain-language narration; the deterministic gate still
+// makes the mint/refuse decision. The model reasons; it never self-certifies.
 //
 // Also exports runAgent(opportunity, opts) for programmatic use.
 
@@ -18,6 +22,8 @@ import { CoreScores } from './types/research-score';
 import { DEFAULT_WEIGHTS, THRESHOLDS } from './scoring/weights';
 import { NearCreditIssuer } from './chain/near-issuer';
 import { ApifyResearchProvider } from './research/apify-research';
+import { GlmReasoner } from './reasoning/glm-reasoner';
+import { TigrisLedger } from './ledger/tigris-ledger';
 import { buildMaEarthPackage, MaEarthPackage } from './maearth/maearth-package';
 
 export { runAgent } from './agent/run';
@@ -82,7 +88,27 @@ function printResearch(result: AgentRunResult): void {
   console.log(`    ${r.summary}`);
 }
 
-function printResult(result: AgentRunResult): void {
+// ── Reasoning stage (GLM-4 / stub) ───────────────────────────────────────────
+// Display-only narration. The doctrine line makes the boundary explicit: the model
+// reasons; the deterministic gate (printed next, STAGE 4) decides. GLM output never
+// touches the issue/refuse boolean.
+function printReasoning(result: AgentRunResult, label: string): void {
+  if (!result.reasoning) return;
+  const r = result.reasoning;
+  header('STAGE 3.5', `Reasoning (${label}) — the agent explains; it does NOT decide`);
+  console.log('  on the research');
+  console.log(`    ${r.research}`);
+  console.log('  on the score');
+  console.log(`    ${r.score}`);
+  console.log('  on the proof-plan');
+  console.log(`    ${r.proofPlan}`);
+  console.log(
+    `\n  ⚖  reasoning by ${label} · decision by deterministic gate ` +
+      `(the model does not self-certify)`
+  );
+}
+
+function printResult(result: AgentRunResult, reasonerLabel: string): void {
   const { opportunity: o } = result;
 
   header('AGENT', 'Zentient Regen — autonomous scoring + on-chain credit agent');
@@ -150,6 +176,9 @@ function printResult(result: AgentRunResult): void {
   console.log('  ── disclaimer ──');
   console.log(`    "${pp.disclaimer}"`);
 
+  // ── Stage 3.5: Reasoning (GLM-4 / stub) — narrates; never decides ───────────
+  printReasoning(result, reasonerLabel);
+
   // ── Stage 4: Credit decision ────────────────────────────────────────────────
   header('STAGE 4', 'Credit decision (honest defaults; no self-certification)');
   const ca = result.creditAction!;
@@ -193,6 +222,21 @@ function printResult(result: AgentRunResult): void {
         '  and an independent validator approval before any mint. This is the\n' +
         '  honest default — the agent never self-certifies impact.'
     );
+  }
+
+  // ── Stage 6: Transparent ledger (Tigris / local) ────────────────────────────
+  // The auditable record is persisted whether the agent issued OR refused — the
+  // trail records no-mint outcomes too, not just mints.
+  if (result.ledgerWrite) {
+    const w = result.ledgerWrite;
+    header('STAGE 6', 'Transparent ledger (Tigris object storage — S3-compatible)');
+    if (w.backend === 'tigris') {
+      console.log(`  proof-plan + decision persisted to Tigris → ${w.location}/${w.key}`);
+    } else {
+      console.log(`  proof-plan + decision persisted to local ledger → ${w.location}`);
+      console.log('    (set TIGRIS_BUCKET + AWS_* to persist to Tigris instead)');
+    }
+    kv('decision recorded', result.creditAction?.decision ?? '(none)');
   }
 
   console.log('\n' + BAR + '\n');
@@ -264,10 +308,18 @@ async function main(): Promise<void> {
   const withEvidence = process.argv.includes('--with-evidence');
   const useNear = process.argv.includes('--near');
   const useResearch = process.argv.includes('--research');
+  const useGlm = process.argv.includes('--glm');
+  const useTigris = process.argv.includes('--tigris');
   const useMaEarth = process.argv.includes('--maearth');
   const opts: RunOptions = { withEvidence };
   if (useNear) opts.issuer = new NearCreditIssuer();
   if (useResearch) opts.researcher = new ApifyResearchProvider();
+  // --glm swaps StubReasoner → GlmReasoner (real Z.ai / Zhipu GLM). Constructed lazily
+  // so a missing GLM_API_KEY throws here (selected-path honesty), never on the default.
+  if (useGlm) opts.reasoner = new GlmReasoner();
+  // --tigris swaps LocalLedger → TigrisLedger (real S3-compatible object storage).
+  if (useTigris) opts.ledger = new TigrisLedger();
+  const reasonerLabel = useGlm ? 'GLM-4' : 'stub';
 
   console.log(
     withEvidence
@@ -289,9 +341,19 @@ async function main(): Promise<void> {
       ? '▶ CHAIN: NEAR testnet  (real signAndSendTransaction via FastNEAR — explorer-verifiable)'
       : '▶ CHAIN: stub  (deterministic offline receipt)'
   );
+  console.log(
+    useGlm
+      ? '▶ REASONING: GLM-4  (real Z.ai / Zhipu chat-completion — needs GLM_API_KEY) · model reasons, gate decides'
+      : '▶ REASONING: stub  (deterministic offline narration) · model reasons, gate decides'
+  );
+  console.log(
+    useTigris
+      ? '▶ LEDGER: Tigris  (real S3-compatible object storage — needs TIGRIS_BUCKET + AWS_*)'
+      : '▶ LEDGER: local  (deterministic offline ./.ledger/*.json audit trail)'
+  );
 
   const result = await runAgent(URBAN_HUB_FARMS, opts);
-  printResult(result);
+  printResult(result, reasonerLabel);
 
   // MaEarth grant package — chain-free, derived from the run above. Attached to the
   // result (so programmatic callers can read result.maEarthPackage) and pretty-printed.

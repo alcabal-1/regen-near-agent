@@ -30,6 +30,10 @@ import { CreditIssuer, CreditReceipt } from '../chain/credit-issuer';
 import { StubCreditIssuer } from '../chain/stub-issuer';
 import { ResearchProvider, ResearchResult } from '../research/research-provider';
 import { StubResearchProvider } from '../research/stub-research';
+import { Reasoner } from '../reasoning/reasoner';
+import { StubReasoner } from '../reasoning/stub-reasoner';
+import { Ledger, LedgerRecord, LedgerWriteResult } from '../ledger/ledger';
+import { LocalLedger } from '../ledger/local-ledger';
 import { RequestedDecision } from '../types/validator-handoff';
 
 export interface RunOptions {
@@ -41,6 +45,13 @@ export interface RunOptions {
   // Override the web-research implementation. Defaults to StubResearchProvider
   // (offline, deterministic). Pass an ApifyResearchProvider for the live web path.
   researcher?: ResearchProvider;
+  // Override the reasoning-LLM implementation. Defaults to StubReasoner (offline,
+  // deterministic). Pass a GlmReasoner for the live GLM (Z.ai / Zhipu) path.
+  // DOCTRINE: the reasoner ONLY narrates — it never feeds the credit decision.
+  reasoner?: Reasoner;
+  // Override the memory / audit-ledger implementation. Defaults to LocalLedger
+  // (offline, writes ./.ledger/*.json). Pass a TigrisLedger for the live S3 path.
+  ledger?: Ledger;
   // Optional explicit research topics for the query (project comes from the
   // opportunity title). Defaults to a regen-oriented topic set.
   researchTopics?: string[];
@@ -61,12 +72,26 @@ export interface AgentRunResult {
   proofPlanHash?: string;
   creditAction?: CreditActionResult;
   receipt?: CreditReceipt;
+  // Optional GLM (or stub) reasoning narration — a human-language read of the
+  // research, score, and proof-plan. Display-only: produced AFTER the decision is
+  // made, so it provably cannot influence the issue/refuse boolean.
+  reasoning?: AgentReasoning;
+  // Optional ledger write result — where the auditable record was persisted
+  // (Tigris bucket key, or the local ./.ledger path). Present after a persist.
+  ledgerWrite?: LedgerWriteResult;
   // Optional grant-application package (MaEarth / Restor), attached when the caller
   // asks for it (see --maearth). Chain-free, derived from the run above. Imported as
   // a type only so run.ts stays free of any maearth runtime dependency.
   maEarthPackage?: import('../maearth/maearth-package').MaEarthPackage;
   // True when the loop short-circuited at the qualification gate.
   haltedAtQualification: boolean;
+}
+
+// The reasoner's three short narrations, gathered after the decision (display-only).
+export interface AgentReasoning {
+  research: string;
+  score: string;
+  proofPlan: string;
 }
 
 // Default regen-oriented research topics, used when the caller doesn't specify any.
@@ -110,6 +135,8 @@ export async function runAgent(
 ): Promise<AgentRunResult> {
   const issuer = opts.issuer ?? new StubCreditIssuer();
   const researcher = opts.researcher ?? new StubResearchProvider();
+  const reasoner = opts.reasoner ?? new StubReasoner();
+  const ledger = opts.ledger ?? new LocalLedger();
 
   // 0. RESEARCH FIRST — the agent gathers its own evidence about the project before
   //    judging it. Findings enrich the proof-plan; they do NOT change the score.
@@ -159,6 +186,31 @@ export async function runAgent(
     });
   }
 
+  // 6. Reasoning — AFTER the decision, on purpose. The reasoner only narrates the
+  //    research / score / proof-plan in plain language; it is handed the finished
+  //    decision context but its output is never read back into the issue/refuse
+  //    boolean. Running it here makes that boundary structural: the gate has already
+  //    fired by the time the model speaks. (Stub by default; GLM when --glm/key set.)
+  const reasoning: AgentReasoning = {
+    research: await reasoner.interpretResearch(research),
+    score: await reasoner.explainScore(score),
+    proofPlan: await reasoner.narrateProofPlan(proofPlan),
+  };
+
+  // 7. Persist the auditable record — issued OR refused — to the ledger. The
+  //    transparent trail records the no-mint outcomes too, not just the mints.
+  const record: LedgerRecord = {
+    opportunity_id: opportunity.opportunity_id,
+    recorded_at: new Date().toISOString(),
+    decision: creditAction.decision,
+    proof_plan_hash: planHash,
+    proof_plan: proofPlan,
+    research,
+    credit_action: creditAction,
+    receipt,
+  };
+  const ledgerWrite = await ledger.persist(record);
+
   return {
     opportunity,
     research,
@@ -168,6 +220,8 @@ export async function runAgent(
     proofPlanHash: planHash,
     creditAction,
     receipt,
+    reasoning,
+    ledgerWrite,
     haltedAtQualification: false,
   };
 }
