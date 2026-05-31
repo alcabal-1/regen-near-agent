@@ -1,7 +1,11 @@
 // CLI entry + programmatic export.
 //
-//   npm run demo                     → Urban Hub Farms, stub chain, honest STAKE outcome
-//   npm run demo -- --with-evidence  → full ISSUE_CREDIT path (stub tx)
+//   npm run demo                                 → Urban Hub Farms, stub chain, honest STAKE outcome
+//   npm run demo -- --with-evidence              → full ISSUE_CREDIT path (stub tx)
+//   npm run demo:near -- --with-evidence         → full ISSUE_CREDIT path, REAL NEAR testnet tx
+//
+// The --near flag swaps StubCreditIssuer for NearCreditIssuer (real on-chain
+// anchor). Everything upstream of the chain seam is identical either way.
 //
 // Also exports runAgent(opportunity, opts) for programmatic use.
 
@@ -9,6 +13,7 @@ import { runAgent, RunOptions, AgentRunResult } from './agent/run';
 import { URBAN_HUB_FARMS } from './demo/urban-hub-farms';
 import { CoreScores } from './types/research-score';
 import { DEFAULT_WEIGHTS, THRESHOLDS } from './scoring/weights';
+import { NearCreditIssuer } from './chain/near-issuer';
 
 export { runAgent } from './agent/run';
 export type { RunOptions, AgentRunResult } from './agent/run';
@@ -161,12 +166,19 @@ function printResult(result: AgentRunResult): void {
 
 async function main(): Promise<void> {
   const withEvidence = process.argv.includes('--with-evidence');
+  const useNear = process.argv.includes('--near');
   const opts: RunOptions = { withEvidence };
+  if (useNear) opts.issuer = new NearCreditIssuer();
 
   console.log(
     withEvidence
       ? '\n▶ MODE: --with-evidence  (simulating full evidence + validator approval → ISSUE_CREDIT path)'
       : '\n▶ MODE: default  (Urban Hub Farms, evidence not yet submitted → honest STAKE outcome)'
+  );
+  console.log(
+    useNear
+      ? '▶ CHAIN: NEAR testnet  (real signAndSendTransaction via FastNEAR — explorer-verifiable)'
+      : '▶ CHAIN: stub  (deterministic offline receipt)'
   );
 
   const result = await runAgent(URBAN_HUB_FARMS, opts);
