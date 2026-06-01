@@ -28,8 +28,13 @@ import { runAgent, RunOptions } from '../agent/run';
 import { URBAN_HUB_FARMS } from '../demo/urban-hub-farms';
 import { Opportunity } from '../types/opportunity';
 import { ApifyResearchProvider } from '../research/apify-research';
+import { GlmReasoner } from '../reasoning/glm-reasoner';
+import { TigrisLedger } from '../ledger/tigris-ledger';
 // NOTE: NearCreditIssuer is intentionally NOT imported. The web path is key-free
 // and always uses the default StubCreditIssuer (see SECURITY BOUNDARY above).
+// DOCTRINE: the reasoner (Stage 3.5) and ledger (Stage 6) are display/persistence
+// only — neither touches the issue/refuse decision; the deterministic gate in
+// runAgent already decided. Nothing here is parsed back into that boolean.
 
 const PORT = Number(process.env.PORT) || 3000;
 
@@ -98,12 +103,48 @@ app.post('/run', async (req: Request, res: Response) => {
     if (researcher) opts.researcher = researcher;
     // opts.issuer is intentionally left unset → default StubCreditIssuer (key-free).
 
+    // Reasoning layer (Stage 3.5) — display-only narration, NEVER feeds the decision.
+    // Gated on NEAR_AI_API_KEY so the hosted, key-free page stays on the default stub
+    // reasoner. Wrapped in try/catch so a sponsor-gateway hiccup degrades to stub
+    // rather than 500-ing the page.
+    let reasonerLabel = 'stub';
+    if (process.env.NEAR_AI_API_KEY?.trim()) {
+      const model = process.env.NEAR_AI_MODEL?.trim() || 'anthropic/claude-haiku-4-5';
+      try {
+        opts.reasoner = new GlmReasoner({
+          baseUrl: process.env.NEAR_AI_BASE_URL?.trim() || 'https://cloud-api.near.ai/v1',
+          model,
+          apiKey: process.env.NEAR_AI_API_KEY.trim(),
+        });
+        reasonerLabel = `NEAR AI Cloud (${model})`;
+      } catch {
+        // degrade to the default stub reasoner — page must not break
+        delete opts.reasoner;
+        reasonerLabel = 'stub';
+      }
+    }
+
+    // Ledger layer (Stage 6) — persistence only. Gated on Tigris creds; degrades to
+    // the default local ledger on any construction error.
+    let ledgerLabel = 'local';
+    if (process.env.TIGRIS_BUCKET?.trim() && process.env.AWS_ACCESS_KEY_ID?.trim()) {
+      try {
+        opts.ledger = new TigrisLedger();
+        ledgerLabel = 'Tigris';
+      } catch {
+        delete opts.ledger;
+        ledgerLabel = 'local';
+      }
+    }
+
     const result = await runAgent(opportunity, opts);
 
     res.json({
       ok: true,
       researchMode: researcher ? 'apify-live' : 'stub-offline',
       chainMode: 'stub', // always stub on the public web path (security boundary)
+      reasonerLabel,
+      ledgerLabel,
       verifiedOnChainTxUrl: VERIFIED_ONCHAIN_TX_URL,
       result,
     });
@@ -116,10 +157,19 @@ app.post('/run', async (req: Request, res: Response) => {
 if (require.main === module) {
   app.listen(PORT, () => {
     // eslint-disable-next-line no-console
+    const reasoningMode = process.env.NEAR_AI_API_KEY?.trim()
+      ? `NEAR AI Cloud (${process.env.NEAR_AI_MODEL?.trim() || 'anthropic/claude-haiku-4-5'})`
+      : 'stub (offline)';
+    const ledgerMode =
+      process.env.TIGRIS_BUCKET?.trim() && process.env.AWS_ACCESS_KEY_ID?.trim()
+        ? 'Tigris (S3-compatible)'
+        : 'local (offline)';
     console.log(
-      `\n  Zentient Regen web demo listening on http://localhost:${PORT}\n` +
+      `\n  Zentient Regen web demo listening on  ➜  http://localhost:${PORT}\n` +
         `  research: ${process.env.APIFY_TOKEN?.trim() ? 'Apify (live)' : 'stub (offline)'}` +
-        `   chain: stub (key-free — see SECURITY BOUNDARY in src/web/server.ts)\n`
+        `   chain: stub (key-free — see SECURITY BOUNDARY in src/web/server.ts)\n` +
+        `  reasoning: ${reasoningMode}   ledger: ${ledgerMode}\n` +
+        `  open this URL in your browser:  http://localhost:${PORT}\n`
     );
   });
 }
@@ -360,6 +410,41 @@ function renderDecision(ca, receipt, verifiedUrl) {
   return card('Stage 4 · Credit decision', inner, cls === 'issue' ? '' : '');
 }
 
+// Stage 3.5 — display-only reasoning. The doctrine line states the boundary:
+// the model explains; the deterministic gate (Stage 4, already decided) owns the
+// issue/refuse outcome. Nothing here is parsed back into the decision.
+function renderReasoning(reasoning, label) {
+  if (!reasoning) return '';
+  const para = (heading, text) =>
+    text ? '<h3 style="margin:14px 0 4px;font-size:13px;color:var(--muted)">'+esc(heading)+'</h3><p>'+esc(text)+'</p>' : '';
+  return card('Stage 3.5 · Reasoning (' + esc(label) + ') — the agent explains; it does NOT decide',
+    para('on the research', reasoning.research) +
+    para('on the score', reasoning.score) +
+    para('on the proof-plan', reasoning.proofPlan) +
+    '<p class="disclaimer">⚖ reasoning by ' + esc(label) +
+      ' · decision by deterministic gate (the model does not self-certify)</p>');
+}
+
+// Stage 6 — transparent ledger (persistence display only). Shows where the auditable
+// record landed (Tigris bucket/key, or local path) and the recorded decision.
+function renderLedger(w, decision) {
+  if (!w) return '';
+  const isTigris = w.backend === 'tigris';
+  // Tigris → bucket/key (e.g. regen-near-agent-ledger/<id>/<ts>.json); local → full path.
+  const persistedTo = isTigris ? (w.location + '/' + w.key) : w.location;
+  return card('Stage 6 · Transparent ledger (Tigris object storage — S3-compatible)',
+    kv([
+      ['backend', '<span class="chip">' + esc(isTigris ? 'Tigris' : 'local') + '</span>'],
+      ['persisted to', '<span class="mono">'+esc(persistedTo)+'</span>'],
+      ['decision recorded', esc(decision || '(none)')],
+    ]) +
+    '<p class="muted">' +
+      (isTigris
+        ? 'The full proof-plan + research + decision record is persisted to durable, S3-compatible object storage — auditable later. The trail records refusals too, not just mints.'
+        : 'The full proof-plan + research + decision record is persisted to the local ./.ledger audit trail (set TIGRIS_BUCKET + AWS_* to persist to Tigris instead). The trail records refusals too, not just mints.') +
+    '</p>');
+}
+
 $('f').addEventListener('submit', async (e) => {
   e.preventDefault();
   const btn = $('run');
@@ -387,13 +472,17 @@ $('f').addEventListener('submit', async (e) => {
       ['tier / track', esc(r.opportunity ? (r.opportunity.tier + ' / ' + r.opportunity.track) : '')],
       ['research mode', esc(data.researchMode)],
       ['chain mode', esc(data.chainMode) + ' <span class="muted">(public demo never signs live; key-free)</span>'],
+      ['reasoning', esc(data.reasonerLabel || 'stub') + ' <span class="muted">(narrates; never decides)</span>'],
+      ['ledger', esc(data.ledgerLabel || 'local')],
     ]));
     let html = head + renderResearch(r.research) + renderQualification(r.qualification);
     if (r.haltedAtQualification) {
       html += card('Decision', '<p><span class="pill none">NO_ACTION</span></p><p class="muted">The opportunity does not qualify yet. The agent takes no action.</p>');
     } else {
       html += renderScore(r.score) + renderProofPlan(r.proofPlan, r.proofPlanHash) +
-        renderDecision(r.creditAction, r.receipt, data.verifiedOnChainTxUrl);
+        renderReasoning(r.reasoning, data.reasonerLabel || 'stub') +
+        renderDecision(r.creditAction, r.receipt, data.verifiedOnChainTxUrl) +
+        renderLedger(r.ledgerWrite, r.creditAction ? r.creditAction.decision : '');
     }
     html += '<details><summary>Raw JSON</summary><pre>'+esc(JSON.stringify(data, null, 2))+'</pre></details>';
     out.innerHTML = html;
