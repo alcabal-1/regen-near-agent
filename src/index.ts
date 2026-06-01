@@ -309,17 +309,32 @@ async function main(): Promise<void> {
   const useNear = process.argv.includes('--near');
   const useResearch = process.argv.includes('--research');
   const useGlm = process.argv.includes('--glm');
+  const useNearAi = process.argv.includes('--near-ai');
   const useTigris = process.argv.includes('--tigris');
   const useMaEarth = process.argv.includes('--maearth');
   const opts: RunOptions = { withEvidence };
   if (useNear) opts.issuer = new NearCreditIssuer();
   if (useResearch) opts.researcher = new ApifyResearchProvider();
-  // --glm swaps StubReasoner → GlmReasoner (real Z.ai / Zhipu GLM). Constructed lazily
-  // so a missing GLM_API_KEY throws here (selected-path honesty), never on the default.
-  if (useGlm) opts.reasoner = new GlmReasoner();
+  // Reasoning layer (OpenAI-compatible). --near-ai routes through NEAR AI Cloud (the
+  // headline sponsor's inference gateway); --glm uses Z.ai/Zhipu. Both are display-only
+  // narration — the deterministic gate still owns issue/refuse. Constructed lazily so a
+  // missing key throws here (selected-path honesty), never on the default stub path.
+  if (useNearAi) {
+    opts.reasoner = new GlmReasoner({
+      baseUrl: process.env.NEAR_AI_BASE_URL?.trim() || 'https://cloud-api.near.ai/v1',
+      model: process.env.NEAR_AI_MODEL?.trim() || 'anthropic/claude-haiku-4-5',
+      apiKey: process.env.NEAR_AI_API_KEY?.trim(),
+    });
+  } else if (useGlm) {
+    opts.reasoner = new GlmReasoner();
+  }
   // --tigris swaps LocalLedger → TigrisLedger (real S3-compatible object storage).
   if (useTigris) opts.ledger = new TigrisLedger();
-  const reasonerLabel = useGlm ? 'GLM-4' : 'stub';
+  const reasonerLabel = useNearAi
+    ? `NEAR AI Cloud (${process.env.NEAR_AI_MODEL?.trim() || 'anthropic/claude-haiku-4-5'})`
+    : useGlm
+      ? 'GLM-4'
+      : 'stub';
 
   console.log(
     withEvidence
@@ -342,9 +357,11 @@ async function main(): Promise<void> {
       : '▶ CHAIN: stub  (deterministic offline receipt)'
   );
   console.log(
-    useGlm
-      ? '▶ REASONING: GLM-4  (real Z.ai / Zhipu chat-completion — needs GLM_API_KEY) · model reasons, gate decides'
-      : '▶ REASONING: stub  (deterministic offline narration) · model reasons, gate decides'
+    useNearAi
+      ? `▶ REASONING: NEAR AI Cloud  (real OpenAI-compatible inference via cloud.near.ai — needs NEAR_AI_API_KEY) · model reasons, gate decides`
+      : useGlm
+        ? '▶ REASONING: GLM-4  (real Z.ai / Zhipu chat-completion — needs GLM_API_KEY) · model reasons, gate decides'
+        : '▶ REASONING: stub  (deterministic offline narration) · model reasons, gate decides'
   );
   console.log(
     useTigris

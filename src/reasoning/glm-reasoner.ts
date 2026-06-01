@@ -75,8 +75,10 @@ export class GlmReasoner implements Reasoner {
   private readonly baseUrl: string;
   private readonly model: string;
 
-  constructor(opts: { baseUrl?: string; model?: string } = {}) {
-    this.apiKey = resolveApiKey();
+  constructor(opts: { baseUrl?: string; model?: string; apiKey?: string } = {}) {
+    // apiKey opt lets a caller point this OpenAI-compatible client at another
+    // sponsor gateway (e.g. NEAR AI Cloud) without the GLM_API_KEY env.
+    this.apiKey = opts.apiKey?.trim() || resolveApiKey();
     this.baseUrl = (opts.baseUrl ?? resolveBaseUrl()).replace(/\/+$/, '');
     this.model = opts.model ?? resolveModel();
   }
